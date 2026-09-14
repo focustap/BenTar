@@ -1,83 +1,84 @@
 (() => {
-  const FREETAR = 'https://freetar.de';
-  const TAB_PROXY = 'https://tabs.proxy.freetar.de/tab/';
+  'use strict';
+
+  const BUILD = '20260914d';
+  const SPEEDS = [0.35, 0.5, 0.75, 1, 1.5, 2, 3, 4.5, 6, 8, 11, 15, 20, 28];
+  const SHARP_SCALE = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+  const FLAT_SCALE = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
+  const NOTE_INDEX = { C:0, 'B#':0, 'C#':1, Db:1, D:2, 'D#':3, Eb:3, E:4, Fb:4, 'E#':5, F:5, 'F#':6, Gb:6, G:7, 'G#':8, Ab:8, A:9, 'A#':10, Bb:10, B:11, Cb:11 };
 
   const state = {
-    library: {},
+    songs: [],
+    byId: new Map(),
+    chunkCache: new Map(),
     filter: '',
-    scrollTimer: null,
-    scrollSpeed: 2,
+    currentSong: null,
     transpose: 0,
-    fontSize: Number(localStorage.getItem('bentar_font_size') || 16),
+    fontSize: clampNumber(Number(localStorage.getItem('bentar_font_size') || 16), 11, 30),
+    speedIndex: Math.round(clampNumber(Number(localStorage.getItem('bentar_speed_index') || 5), 0, SPEEDS.length - 1)),
+    autoRunning: false,
+    autoFrame: 0,
+    lastFrameAt: 0,
+    scrollCarry: 0,
   };
 
   const $ = (id) => document.getElementById(id);
 
+  function clampNumber(value, min, max) {
+    if (!Number.isFinite(value)) return min;
+    return Math.max(min, Math.min(max, value));
+  }
+
   function escapeHtml(value) {
     return String(value ?? '')
-      .replaceAll('&', '&amp;')
-      .replaceAll('<', '&lt;')
-      .replaceAll('>', '&gt;')
-      .replaceAll('"', '&quot;')
-      .replaceAll("'", '&#039;');
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
   }
 
-  function normalizeTabPath(value) {
-    if (!value) return '';
-    try {
-      if (/^https?:\/\//i.test(value)) value = new URL(value).pathname;
-    } catch {}
-    if (!value.startsWith('/')) value = '/' + value;
-    const i = value.indexOf('/tab/');
-    if (i >= 0) value = value.slice(i);
-    return value;
+  async function loadManifest() {
+    const response = await fetch(`./static/data/manifest.json?v=${BUILD}`, { cache: 'no-store' });
+    if (!response.ok) throw new Error(`Library manifest returned ${response.status}`);
+    const manifest = await response.json();
+    state.songs = Array.isArray(manifest.songs) ? manifest.songs : [];
+    state.byId = new Map(state.songs.map(song => [String(song.id), song]));
+    $('libraryStatus').textContent = `${state.songs.length} unique tabs from ${manifest.sourceFiles || state.songs.length} saved pages`;
+    renderLibrary();
   }
 
-  async function loadLibrary() {
-    const status = $('libraryStatus');
-    try {
-      const manifestResponse = await fetch('./static/library/manifest.json', { cache: 'no-store' });
-      if (!manifestResponse.ok) throw new Error(`manifest ${manifestResponse.status}`);
-      const files = await manifestResponse.json();
-      const chunks = await Promise.all(files.map(async (name) => {
-        const response = await fetch(`./static/library/${encodeURIComponent(name)}`, { cache: 'no-store' });
-        if (!response.ok) throw new Error(`${name} ${response.status}`);
-        return response.json();
-      }));
-      state.library = Object.assign({}, ...chunks);
-      status.textContent = `${Object.keys(state.library).length} saved tabs`;
-      renderLibrary();
-    } catch (error) {
-      console.error(error);
-      status.textContent = 'Could not load the GitHub library.';
-      $('emptyState').hidden = false;
-      $('emptyState').textContent = 'BenTar could not load its saved-tabs files from GitHub.';
-    }
+  function normalizedSearch(value) {
+    return String(value || '').toLocaleLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
   }
 
   function renderLibrary() {
     const list = $('libraryList');
     const empty = $('emptyState');
-    const query = state.filter.trim().toLowerCase();
-    const songs = Object.values(state.library)
-      .filter(song => `${song.artist_name || ''} ${song.song || ''} ${song.type || ''}`.toLowerCase().includes(query))
-      .sort((a, b) => (a.artist_name || '').localeCompare(b.artist_name || '') || (a.song || '').localeCompare(b.song || ''));
+    const query = normalizedSearch(state.filter);
+    const terms = query ? query.split(/\s+/) : [];
+
+    const songs = state.songs.filter(song => {
+      if (!terms.length) return true;
+      const hay = normalizedSearch(`${song.title} ${song.artist} ${song.type || ''}`);
+      return terms.every(term => hay.includes(term));
+    });
 
     list.innerHTML = '';
     const fragment = document.createDocumentFragment();
     for (const song of songs) {
-      const path = normalizeTabPath(song.tab_url);
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'song-row';
-      button.dataset.path = path;
+      button.dataset.id = song.id;
+      const capo = song.capoText && !/^no capo$/i.test(song.capoText) ? `<span class="capo-dot">Capo ${escapeHtml(song.capoText.replace(/\s*fret$/i, ''))}</span>` : '';
       button.innerHTML = `
-        <span>
-          <span class="song-name">${escapeHtml(song.song || 'Unknown song')}</span>
-          <span class="song-artist">${escapeHtml(song.artist_name || 'Unknown artist')}</span>
+        <span class="song-main">
+          <span class="song-name">${escapeHtml(song.title || 'Unknown song')}</span>
+          <span class="song-artist">${escapeHtml(song.artist || 'Unknown artist')}</span>
         </span>
-        <span class="song-type">${escapeHtml(song.type || 'Tab')}</span>`;
-      button.addEventListener('click', () => openReader(path, true));
+        <span class="song-side">${capo}<span class="song-type">${escapeHtml(song.type || 'Chords')}</span></span>`;
+      button.addEventListener('click', () => openReader(song.id, true));
       fragment.appendChild(button);
     }
     list.appendChild(fragment);
@@ -85,20 +86,24 @@
     empty.textContent = query ? 'No saved tabs match that search.' : 'No saved tabs found.';
   }
 
-  function stopAutoscroll() {
-    if (state.scrollTimer) clearInterval(state.scrollTimer);
-    state.scrollTimer = null;
-    $('autoScroll').textContent = '▶ Auto';
-  }
-
-  function startAutoscroll() {
-    stopAutoscroll();
-    state.scrollTimer = setInterval(() => window.scrollBy(0, 1), Math.max(12, 100 - state.scrollSpeed * 11));
-    $('autoScroll').textContent = '⏸ Auto';
+  async function loadSong(id) {
+    const meta = state.byId.get(String(id));
+    if (!meta) throw new Error('Song is not in the saved library.');
+    let chunk = state.chunkCache.get(meta.chunk);
+    if (!chunk) {
+      const response = await fetch(`./static/data/${encodeURIComponent(meta.chunk)}?v=${BUILD}`, { cache: 'force-cache' });
+      if (!response.ok) throw new Error(`${meta.chunk} returned ${response.status}`);
+      chunk = await response.json();
+      state.chunkCache.set(meta.chunk, chunk);
+    }
+    const song = chunk[String(id)];
+    if (!song) throw new Error('The song is missing from its data chunk.');
+    return song;
   }
 
   function showLibrary(push = false) {
     stopAutoscroll();
+    state.currentSong = null;
     $('readerView').hidden = true;
     $('libraryView').hidden = false;
     $('libraryFilter').hidden = false;
@@ -108,6 +113,7 @@
   }
 
   function showReaderShell() {
+    stopAutoscroll();
     $('libraryView').hidden = true;
     $('readerView').hidden = false;
     $('libraryFilter').hidden = true;
@@ -117,153 +123,206 @@
     window.scrollTo(0, 0);
   }
 
-  function formatTab(raw) {
-    let text = String(raw || '')
-      .replaceAll('\\r\\n', '\n')
-      .replaceAll('\\n', '\n')
-      .replaceAll('\r\n', '\n')
-      .replaceAll('\r', '\n');
-    text = escapeHtml(text);
-    text = text.replace(/\[ch\]([^[]+?)\[\/ch\]/gi, (_, chordText) => {
-      const chord = chordText.trim();
-      const parts = chord.split('/');
-      const main = parts[0];
-      const bass = parts[1];
-      const match = main.match(/^([A-G](?:#|b)?)(.*)$/);
-      if (!match) return `<span class="chord">${escapeHtml(chord)}</span>`;
-      const [, root, quality] = match;
-      let out = `<span class="chord"><span class="chord-root" data-original="${root}">${root}</span>${quality}`;
-      if (bass) out += `/<span class="chord-root" data-original="${bass}">${bass}</span>`;
-      return out + '</span>';
-    });
-    text = text.replaceAll('[tab]', '').replaceAll('[/tab]', '');
-    text = text.replaceAll(' ', '&nbsp;').replaceAll('\n', '<br>');
-    return text;
+  function formatCapo(song) {
+    if (song.capoText) return song.capoText;
+    if (Number(song.capo) > 0) return `${song.capo} fret`;
+    return 'No capo';
   }
 
-  function parseSong(htmlText) {
-    const doc = new DOMParser().parseFromString(htmlText, 'text/html');
-    const store = doc.querySelector('div.js-store');
-    if (!store) throw new Error('No Freetar/UG song payload was found.');
-    const data = JSON.parse(store.getAttribute('data-content'));
-    const page = data.store.page.data;
-    const tab = page.tab;
-    const view = page.tab_view;
-    const meta = view.meta && typeof view.meta === 'object' ? view.meta : {};
-    const tuningData = meta.tuning;
-    const tuning = tuningData && typeof tuningData === 'object'
-      ? [tuningData.value, tuningData.name && `(${tuningData.name})`].filter(Boolean).join(' ')
-      : null;
-    return {
-      artist: tab.artist_name || 'Unknown artist',
-      title: tab.song_name || 'Unknown song',
-      version: Number(tab.version || 1),
-      difficulty: view.ug_difficulty || null,
-      capo: meta.capo || null,
-      tuning,
-      tabUrl: tab.tab_url || null,
-      content: view.wiki_tab?.content || '',
-    };
+  function renderMeta(song) {
+    const chips = [];
+    chips.push(`<span class="meta-chip capo"><strong>Capo</strong> ${escapeHtml(formatCapo(song))}</span>`);
+    if (song.tuning) chips.push(`<span class="meta-chip"><strong>Tuning</strong> ${escapeHtml(song.tuning)}</span>`);
+    if (song.key) chips.push(`<span class="meta-chip"><strong>Key</strong> ${escapeHtml(song.key)}</span>`);
+    if (song.difficulty) chips.push(`<span class="meta-chip"><strong>Difficulty</strong> ${escapeHtml(song.difficulty)}</span>`);
+    if (song.source) chips.push(`<span class="meta-chip"><a class="meta-link" href="${escapeHtml(song.source)}" target="_blank" rel="noopener">Original ↗</a></span>`);
+    $('songMeta').innerHTML = chips.join('');
   }
 
-  async function fetchSong(path) {
-    const proxyPath = normalizeTabPath(path).replace(/^\/tab\//, '');
-    const response = await fetch(TAB_PROXY + proxyPath, { mode: 'cors', cache: 'no-store' });
-    if (!response.ok) throw new Error(`Freetar proxy returned ${response.status}`);
-    return parseSong(await response.text());
+  function chordHtml(original) {
+    return `<span class="chord" data-chord="${escapeHtml(original)}">${escapeHtml(transposeChord(original, state.transpose))}</span>`;
   }
 
-  async function openReader(path, push = false) {
-    path = normalizeTabPath(path);
-    if (!path.startsWith('/tab/')) return;
+  function renderChordSheet(song) {
+    const reader = $('tabReader');
+    const raw = String(song.content || '').replace(/\r\n?/g, '\n');
+    const parts = [];
+    let last = 0;
+    const chordPattern = /\[ch\]([\s\S]*?)\[\/ch\]/gi;
+    let match;
+    while ((match = chordPattern.exec(raw))) {
+      parts.push(escapeHtml(raw.slice(last, match.index)));
+      parts.push(chordHtml(match[1].trim()));
+      last = chordPattern.lastIndex;
+    }
+    parts.push(escapeHtml(raw.slice(last)));
+    let rendered = parts.join('');
+    rendered = rendered.replace(/(^|\n)(\[[^\]\n]{1,40}\])/g, '$1<span class="section-tag">$2</span>');
+    reader.innerHTML = rendered;
+    reader.style.fontSize = `${state.fontSize}px`;
+  }
+
+  async function openReader(id, push = false) {
     showReaderShell();
-    if (push) history.pushState({ tab: path }, '', `?tab=${encodeURIComponent(path)}`);
-
-    $('openFreetar').href = FREETAR + path;
+    if (push) history.pushState({ song: String(id) }, '', `?song=${encodeURIComponent(id)}`);
     try {
-      const song = await fetchSong(path);
-      $('songTitle').textContent = song.title + (song.version > 1 ? ` (ver ${song.version})` : '');
-      $('songArtist').textContent = song.artist;
-      document.title = `${song.artist} — ${song.title} | BenTar`;
-
-      const meta = [];
-      if (song.difficulty) meta.push(`<span>Difficulty: ${escapeHtml(song.difficulty)}</span>`);
-      meta.push(`<span>Capo: ${song.capo ? escapeHtml(song.capo) : 'none'}</span>`);
-      if (song.tuning) meta.push(`<span>Tuning: ${escapeHtml(song.tuning)}</span>`);
-      $('songMeta').innerHTML = meta.join('');
-
-      const reader = $('tabReader');
-      reader.innerHTML = formatTab(song.content);
-      reader.style.fontSize = `${state.fontSize}px`;
+      const song = await loadSong(id);
+      state.currentSong = song;
       state.transpose = 0;
-      $('transposeLabel').textContent = '0';
-      $('speedLabel').textContent = String(state.scrollSpeed);
-
+      $('transposeReset').textContent = '0';
+      $('songTitle').textContent = song.title || 'Unknown song';
+      $('songArtist').textContent = song.artist || 'Unknown artist';
+      document.title = `${song.title} — ${song.artist} | BenTar`;
+      renderMeta(song);
+      renderChordSheet(song);
+      updateSpeedLabel();
       $('readerLoading').hidden = true;
       $('readerContent').hidden = false;
     } catch (error) {
       console.error('BenTar reader error:', error);
       $('readerLoading').hidden = true;
       $('readerError').hidden = false;
+      $('readerErrorText').textContent = error?.message || 'The saved tab data could not be loaded.';
     }
   }
 
-  const sharpScale = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-  const enharmonic = { Db: 'C#', Eb: 'D#', Gb: 'F#', Ab: 'G#', Bb: 'A#' };
-  function transposeRoot(root, steps) {
-    const normalized = enharmonic[root] || root;
-    const index = sharpScale.indexOf(normalized);
-    return index < 0 ? root : sharpScale[(index + steps + 120) % 12];
+  function preferFlats(song, chord) {
+    return /b/.test(chord) || /b/.test(song?.key || '');
   }
 
-  function applyTranspose() {
-    document.querySelectorAll('#tabReader .chord-root').forEach(el => {
-      el.textContent = transposeRoot(el.dataset.original || el.textContent, state.transpose);
+  function transposeNote(note, steps, useFlats) {
+    const index = NOTE_INDEX[note];
+    if (index === undefined) return note;
+    const scale = useFlats ? FLAT_SCALE : SHARP_SCALE;
+    return scale[(index + steps + 1200) % 12];
+  }
+
+  function transposeChord(chord, steps) {
+    if (!steps || !chord) return chord;
+    const text = String(chord);
+    const mainMatch = text.match(/^([A-G](?:#|b)?)(.*)$/);
+    if (!mainMatch) return text;
+    const useFlats = preferFlats(state.currentSong, text);
+    const root = transposeNote(mainMatch[1], steps, useFlats);
+    let rest = mainMatch[2];
+    rest = rest.replace(/\/([A-G](?:#|b)?)$/, (_, bass) => `/${transposeNote(bass, steps, useFlats || /b/.test(bass))}`);
+    return root + rest;
+  }
+
+  function applyTranspose(delta) {
+    state.transpose = clampNumber(state.transpose + delta, -12, 12);
+    document.querySelectorAll('#tabReader .chord[data-chord]').forEach(el => {
+      el.textContent = transposeChord(el.dataset.chord, state.transpose);
     });
-    $('transposeLabel').textContent = state.transpose > 0 ? `+${state.transpose}` : String(state.transpose);
+    $('transposeReset').textContent = state.transpose > 0 ? `+${state.transpose}` : String(state.transpose);
+  }
+
+  function resetTranspose() {
+    state.transpose = 0;
+    document.querySelectorAll('#tabReader .chord[data-chord]').forEach(el => {
+      el.textContent = el.dataset.chord;
+    });
+    $('transposeReset').textContent = '0';
   }
 
   function applyFont(delta) {
-    state.fontSize = Math.max(11, Math.min(30, state.fontSize + delta));
+    state.fontSize = clampNumber(state.fontSize + delta, 11, 30);
     $('tabReader').style.fontSize = `${state.fontSize}px`;
     localStorage.setItem('bentar_font_size', String(state.fontSize));
   }
 
+  function updateSpeedLabel() {
+    const speed = SPEEDS[state.speedIndex];
+    $('speedLabel').textContent = `${Number.isInteger(speed) ? speed : speed.toFixed(2).replace(/0$/, '')} px/s`;
+    localStorage.setItem('bentar_speed_index', String(state.speedIndex));
+  }
+
+  function changeSpeed(delta) {
+    state.speedIndex = Math.round(clampNumber(state.speedIndex + delta, 0, SPEEDS.length - 1));
+    updateSpeedLabel();
+  }
+
+  function autoStep(now) {
+    if (!state.autoRunning) return;
+    if (!state.lastFrameAt) state.lastFrameAt = now;
+    const elapsed = Math.min(250, now - state.lastFrameAt);
+    state.lastFrameAt = now;
+    state.scrollCarry += SPEEDS[state.speedIndex] * elapsed / 1000;
+    const pixels = Math.floor(state.scrollCarry);
+    if (pixels >= 1) {
+      state.scrollCarry -= pixels;
+      window.scrollBy(0, pixels);
+    }
+    const atBottom = window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2;
+    if (atBottom) {
+      stopAutoscroll();
+      return;
+    }
+    state.autoFrame = requestAnimationFrame(autoStep);
+  }
+
+  function startAutoscroll() {
+    if (state.autoRunning) return;
+    state.autoRunning = true;
+    state.lastFrameAt = 0;
+    state.scrollCarry = 0;
+    $('autoScroll').textContent = '⏸ Auto';
+    $('autoScroll').closest('.auto-group')?.classList.add('is-running');
+    state.autoFrame = requestAnimationFrame(autoStep);
+  }
+
+  function stopAutoscroll() {
+    state.autoRunning = false;
+    if (state.autoFrame) cancelAnimationFrame(state.autoFrame);
+    state.autoFrame = 0;
+    state.lastFrameAt = 0;
+    state.scrollCarry = 0;
+    if ($('autoScroll')) $('autoScroll').textContent = '▶ Auto';
+    $('autoScroll')?.closest('.auto-group')?.classList.remove('is-running');
+  }
+
   function bindControls() {
-    $('libraryFilter').addEventListener('input', (event) => {
+    $('libraryFilter').addEventListener('input', event => {
       state.filter = event.target.value;
       renderLibrary();
     });
     $('homeButton').addEventListener('click', () => showLibrary(true));
     $('backButton').addEventListener('click', () => showLibrary(true));
     $('errorBackButton').addEventListener('click', () => showLibrary(true));
-    $('autoScroll').addEventListener('click', () => state.scrollTimer ? stopAutoscroll() : startAutoscroll());
-    $('speedDown').addEventListener('click', () => {
-      state.scrollSpeed = Math.max(1, state.scrollSpeed - 1);
-      $('speedLabel').textContent = String(state.scrollSpeed);
-      if (state.scrollTimer) startAutoscroll();
-    });
-    $('speedUp').addEventListener('click', () => {
-      state.scrollSpeed = Math.min(8, state.scrollSpeed + 1);
-      $('speedLabel').textContent = String(state.scrollSpeed);
-      if (state.scrollTimer) startAutoscroll();
-    });
-    $('transposeDown').addEventListener('click', () => { state.transpose--; applyTranspose(); });
-    $('transposeUp').addEventListener('click', () => { state.transpose++; applyTranspose(); });
+
+    $('autoScroll').addEventListener('click', () => state.autoRunning ? stopAutoscroll() : startAutoscroll());
+    $('speedDown').addEventListener('click', () => changeSpeed(-1));
+    $('speedUp').addEventListener('click', () => changeSpeed(1));
+
+    $('transposeDown').addEventListener('click', () => applyTranspose(-1));
+    $('transposeUp').addEventListener('click', () => applyTranspose(1));
+    $('transposeReset').addEventListener('click', resetTranspose);
     $('fontDown').addEventListener('click', () => applyFont(-1));
     $('fontUp').addEventListener('click', () => applyFont(1));
-    window.addEventListener('popstate', () => routeFromUrl());
+
+    window.addEventListener('popstate', routeFromUrl);
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) stopAutoscroll();
+    });
   }
 
   function routeFromUrl() {
-    const path = new URLSearchParams(location.search).get('tab');
-    if (path) openReader(path, false);
+    const id = new URLSearchParams(location.search).get('song');
+    if (id) openReader(id, false);
     else showLibrary(false);
   }
 
   document.addEventListener('DOMContentLoaded', async () => {
     bindControls();
-    await loadLibrary();
-    routeFromUrl();
+    updateSpeedLabel();
+    try {
+      await loadManifest();
+      routeFromUrl();
+    } catch (error) {
+      console.error(error);
+      $('libraryStatus').textContent = 'Could not load the saved library.';
+      $('emptyState').hidden = false;
+      $('emptyState').textContent = error?.message || 'BenTar could not load its saved tab data.';
+    }
   });
 })();
