@@ -1,0 +1,42 @@
+name: Cache saved tabs
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'static/library/**'
+      - 'scripts/cache_tabs.py'
+      - '.github/workflows/cache-tabs.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  cache-tabs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install cache dependencies
+        run: pip install requests==2.32.5 beautifulsoup4==4.13.5
+
+      - name: Fetch saved tabs from Freetar
+        run: python scripts/cache_tabs.py
+
+      - name: Commit refreshed chord cache
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add static/chords
+          if git diff --cached --quiet; then
+            echo "Chord cache is already up to date."
+          else
+            git commit -m "Refresh saved chord cache"
+            git push
+          fi
