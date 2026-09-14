@@ -4,15 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#0b0d10">
-  <meta name="description" content="BenTar — Ben's saved guitar tabs, powered by Freetar data.">
+  <meta name="description" content="BenTar — Ben's saved guitar chord sheets.">
   <title>BenTar</title>
   <link rel="manifest" href="./manifest.webmanifest">
-  <link rel="stylesheet" href="./static/pages.css">
+  <link rel="stylesheet" href="./static/pages.css?v=20260914d">
 </head>
 <body>
   <header class="topbar">
     <button id="homeButton" class="brand button-reset" type="button" aria-label="Back to My Tabs">BenTar</button>
-    <input id="libraryFilter" type="search" placeholder="Search my tabs…" autocomplete="off" aria-label="Search saved tabs">
+    <input id="libraryFilter" type="search" placeholder="Search songs or artists…" autocomplete="off" aria-label="Search saved tabs">
   </header>
 
   <main id="app">
@@ -20,9 +20,9 @@
       <div class="section-head">
         <div>
           <h1>My Tabs</h1>
-          <p id="libraryStatus">Loading GitHub library…</p>
+          <p id="libraryStatus">Loading saved tabs…</p>
         </div>
-        <span class="pill">GitHub library</span>
+        <span class="pill">Saved library</span>
       </div>
 
       <div id="libraryList" class="song-list" aria-live="polite"></div>
@@ -30,11 +30,11 @@
     </section>
 
     <section id="readerView" hidden>
-      <div id="readerLoading" class="empty">Loading tab…</div>
+      <div id="readerLoading" class="empty">Loading chord sheet…</div>
 
       <div id="readerContent" hidden>
         <div class="reader-head">
-          <button id="backButton" class="secondary" type="button">← My Tabs</button>
+          <button id="backButton" class="secondary" type="button">← Tabs</button>
           <div class="reader-title-wrap">
             <h1 id="songTitle"></h1>
             <p id="songArtist"></p>
@@ -43,31 +43,38 @@
 
         <div id="songMeta" class="meta"></div>
 
-        <div class="reader-toolbar">
-          <button id="autoScroll" type="button">▶ Auto</button>
-          <button id="speedDown" type="button">− Speed</button>
-          <span id="speedLabel">2</span>
-          <button id="speedUp" type="button">+ Speed</button>
-          <button id="transposeDown" type="button">− Key</button>
-          <span id="transposeLabel">0</span>
-          <button id="transposeUp" type="button">+ Key</button>
-          <button id="fontDown" type="button">A−</button>
-          <button id="fontUp" type="button">A+</button>
+        <div class="reader-toolbar" aria-label="Chord sheet controls">
+          <div class="control-group auto-group">
+            <button id="autoScroll" class="control-main" type="button">▶ Auto</button>
+            <button id="speedDown" type="button" aria-label="Slower auto scroll">−</button>
+            <span id="speedLabel" class="value-label">2 px/s</span>
+            <button id="speedUp" type="button" aria-label="Faster auto scroll">+</button>
+          </div>
+
+          <div class="control-group">
+            <span class="control-name">Transpose</span>
+            <button id="transposeDown" type="button" aria-label="Transpose down">−</button>
+            <button id="transposeReset" class="value-button" type="button" title="Reset transpose">0</button>
+            <button id="transposeUp" type="button" aria-label="Transpose up">+</button>
+          </div>
+
+          <div class="control-group font-group">
+            <button id="fontDown" type="button" aria-label="Smaller text">A−</button>
+            <button id="fontUp" type="button" aria-label="Larger text">A+</button>
+          </div>
         </div>
 
-        <article id="tabReader" class="tab-reader"></article>
+        <pre id="tabReader" class="tab-reader" aria-label="Chord sheet"></pre>
       </div>
 
       <div id="readerError" class="empty" hidden>
-        <h2>BenTar couldn't load this saved chord sheet.</h2>
-        <p>This tab may not have made it into the GitHub chord cache yet.</p>
-        <a id="openFreetar" class="primary-link" href="#">Open this tab on Freetar</a>
+        <h2>Couldn't open this chord sheet.</h2>
+        <p id="readerErrorText">The saved tab data is missing.</p>
         <button id="errorBackButton" class="secondary" type="button">← My Tabs</button>
       </div>
     </section>
   </main>
 
-  <script src="./static/cache-interceptor.js"></script>
-  <script src="./static/site.js" defer></script>
+  <script src="./static/site.js?v=20260914d" defer></script>
 </body>
 </html>
