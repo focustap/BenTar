@@ -3,7 +3,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from urllib.parse import quote, urlparse
+from urllib.parse import urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -58,9 +58,7 @@ def _extract_store(html_text: str) -> dict:
 
 
 def _chord_markup(match: re.Match) -> str:
-    chord = match.group(1)
-    chord = html.escape(chord)
-    # Split slash chords so both roots can transpose independently in the browser.
+    chord = html.escape(match.group(1))
     if "/" in chord:
         main, bass = chord.split("/", 1)
     else:
@@ -79,10 +77,12 @@ def _chord_markup(match: re.Match) -> str:
 
 
 def _format_tab(raw: str) -> str:
-    # Escape song text first, then turn UG's chord markers into our own spans.
+    # UG/Freetar content has appeared both with literal \n sequences and real newlines,
+    # so normalize both forms before rendering.
     escaped = html.escape(raw)
     escaped = re.sub(r"\[ch\](.*?)\[/ch\]", _chord_markup, escaped, flags=re.IGNORECASE)
     escaped = escaped.replace("[tab]", "").replace("[/tab]", "")
+    escaped = escaped.replace("\\r\\n", "\n").replace("\\n", "\n")
     escaped = escaped.replace("\r\n", "\n").replace("\r", "\n")
     escaped = escaped.replace(" ", "&nbsp;").replace("\n", "<br>")
     return escaped
