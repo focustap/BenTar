@@ -1,0 +1,50 @@
+html { scroll-behavior: smooth; }
+body { min-height: 100vh; }
+
+.empty-state {
+  max-width: 720px;
+  margin-inline: auto;
+}
+
+.favorite,
+.saveFavorite {
+  font-size: 1.1rem;
+}
+
+.tab-reader {
+  line-height: 1.55;
+  overflow-wrap: normal;
+  white-space: normal;
+  padding-bottom: 45vh;
+}
+
+.chord {
+  color: #f5b642;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.reader-toolbar {
+  position: sticky;
+  top: 57px;
+  z-index: 1010;
+  background: var(--bs-body-bg);
+}
+
+@media (max-width: 700px) {
+  .reader-toolbar {
+    top: 55px;
+  }
+
+  .tab-reader {
+    line-height: 1.65;
+  }
+}
+
+/* A compact layout that is useful as a starting point for the Meta glasses UI. */
+@media (max-width: 620px) and (max-height: 700px) {
+  .navbar { padding-block: .25rem; }
+  main.container-lg { padding-top: .5rem !important; }
+  .reader-toolbar { top: 48px; gap: .3rem !important; }
+  .reader-toolbar .btn { padding: .2rem .45rem; }
+}
