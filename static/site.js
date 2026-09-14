@@ -1,8 +1,10 @@
 (() => {
   'use strict';
 
-  const BUILD = '20260914d';
-  const SPEEDS = [0.35, 0.5, 0.75, 1, 1.5, 2, 3, 4.5, 6, 8, 11, 15, 20, 28];
+  const BUILD = '20260914e';
+  const DIRECTORY_API = 'https://api.github.com/repos/focustap/BenTar/contents/raw-tabs?ref=main';
+  const LIBRARY_CACHE_KEY = 'bentar_raw_tabs_index_v1';
+  const SPEEDS = [0.15, 0.25, 0.35, 0.5, 0.75, 1, 1.5, 2, 3, 4.5, 6, 8, 11, 15, 20, 28];
   const SHARP_SCALE = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
   const FLAT_SCALE = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
   const NOTE_INDEX = { C:0, 'B#':0, 'C#':1, Db:1, D:2, 'D#':3, Eb:3, E:4, Fb:4, 'E#':5, F:5, 'F#':6, Gb:6, G:7, 'G#':8, Ab:8, A:9, 'A#':10, Bb:10, B:11, Cb:11 };
@@ -37,42 +39,121 @@
       .replace(/'/g, '&#039;');
   }
 
-  async function loadManifest() {
-    const response = await fetch(`./static/data/manifest.json?v=${BUILD}`, { cache: 'no-store' });
-    if (!response.ok) throw new Error(`Library manifest returned ${response.status}`);
-    const manifest = await response.json();
-    const partNames = Array.isArray(manifest.parts) ? manifest.parts : [];
-    if (!partNames.length) throw new Error('The saved-library data parts are missing.');
-
-    const encodedParts = await Promise.all(partNames.map(async name => {
-      const partResponse = await fetch(`./static/data/${encodeURIComponent(name)}?v=${BUILD}`, { cache: 'force-cache' });
-      if (!partResponse.ok) throw new Error(`${name} returned ${partResponse.status}`);
-      return (await partResponse.text()).trim();
-    }));
-
-    const songsById = await decodeLibrary(encodedParts.join(''));
-    state.songs = Object.values(songsById).sort((a, b) =>
-      (a.artist || '').localeCompare(b.artist || '') || (a.title || '').localeCompare(b.title || '')
-    );
-    state.byId = new Map(state.songs.map(song => [String(song.id), song]));
-    $('libraryStatus').textContent = `${state.songs.length} unique tabs from ${manifest.sourceFiles || state.songs.length} saved pages`;
-    renderLibrary();
-  }
-
-  async function decodeLibrary(encoded) {
-    if (typeof DecompressionStream !== 'function') {
-      throw new Error('This browser does not support the saved-library decoder.');
-    }
-    const binary = atob(encoded);
-    const compressed = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) compressed[i] = binary.charCodeAt(i);
-    const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('gzip'));
-    const text = await new Response(stream).text();
-    return JSON.parse(text);
-  }
-
   function normalizedSearch(value) {
     return String(value || '').toLocaleLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  }
+
+  function normalizeType(value) {
+    const raw = String(value || '').replace(/\s+/g, ' ').trim();
+    if (/ukulele/i.test(raw)) return 'Ukulele Chords';
+    if (/bass/i.test(raw)) return 'Bass Tab';
+    if (/^tabs?$/i.test(raw)) return 'Tab';
+    return 'Chords';
+  }
+
+  function parseSavedFilename(name) {
+    let stem = String(name || '').replace(/\.html?$/i, '');
+    stem = stem.replace(/-\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$/i, '');
+    stem = stem.replace(/^(?:tabs\.ultimate-guitar\.com|page)(?:-\(\d+\))?\s*/i, '');
+    stem = stem.replace(/^[-\s]+/, '').replace(/^\(\d+\)\s*/, '').trim();
+
+    const byParts = stem.split(/\s+by\s+/i);
+    let left = (byParts.shift() || stem).trim();
+    let artist = byParts.join(' by ').trim();
+    artist = artist
+      .replace(/\s+@\s+Ultimate-Guitar\.Com.*$/i, '')
+      .replace(/\s+@\s+Ultimate-Guit.*$/i, '')
+      .trim();
+
+    const typeMatch = left.match(/^(.*?)\s+(UKULELE\s+CHORDS?|BASS\s+TABS?|CHORDS?|TABS?)(?:\s+\(ver\s+(\d+)\))?$/i);
+    const title = (typeMatch?.[1] || left || 'Unknown song').trim();
+    const type = normalizeType(typeMatch?.[2] || 'Chords');
+    const version = typeMatch?.[3] || '';
+
+    return {
+      title,
+      artist: artist || 'Unknown artist',
+      type,
+      version,
+    };
+  }
+
+  function dedupeKey(song) {
+    return [song.title, song.artist, song.type, song.version || '']
+      .map(value => String(value || '').toLocaleLowerCase().replace(/\s+/g, ' ').trim())
+      .join('|');
+  }
+
+  function cachedDirectory() {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(LIBRARY_CACHE_KEY) || 'null');
+      return Array.isArray(parsed?.files) ? parsed.files : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function saveDirectoryCache(files) {
+    try {
+      localStorage.setItem(LIBRARY_CACHE_KEY, JSON.stringify({ savedAt: Date.now(), files }));
+    } catch {
+      // Storage is only a fallback; the live directory remains the source of truth.
+    }
+  }
+
+  async function fetchRawDirectory() {
+    try {
+      const response = await fetch(`${DIRECTORY_API}&_=${BUILD}`, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`GitHub library listing returned ${response.status}`);
+      const data = await response.json();
+      if (!Array.isArray(data)) throw new Error('GitHub returned an unexpected library listing.');
+      const files = data
+        .filter(item => item?.type === 'file' && /\.html?$/i.test(item.name || ''))
+        .map(item => ({
+          name: item.name,
+          sha: item.sha,
+          size: Number(item.size || 0),
+          download_url: item.download_url || '',
+        }));
+      saveDirectoryCache(files);
+      return files;
+    } catch (error) {
+      const cached = cachedDirectory();
+      if (cached?.length) return cached;
+      throw error;
+    }
+  }
+
+  async function loadLibrary() {
+    const files = await fetchRawDirectory();
+    const unique = new Map();
+
+    for (const file of files) {
+      const parsed = parseSavedFilename(file.name);
+      const song = {
+        id: String(file.sha || file.name),
+        fileName: file.name,
+        fileSize: Number(file.size || 0),
+        downloadUrl: file.download_url || '',
+        ...parsed,
+      };
+      const key = dedupeKey(song);
+      const previous = unique.get(key);
+      if (!previous || song.fileSize > previous.fileSize) unique.set(key, song);
+    }
+
+    state.songs = [...unique.values()].sort((a, b) =>
+      (a.artist || '').localeCompare(b.artist || '') ||
+      (a.title || '').localeCompare(b.title || '') ||
+      (a.version || '').localeCompare(b.version || '')
+    );
+    state.byId = new Map(state.songs.map(song => [String(song.id), song]));
+
+    const sourceText = files.length === state.songs.length
+      ? `${state.songs.length} saved tabs`
+      : `${state.songs.length} unique tabs from ${files.length} saved pages`;
+    $('libraryStatus').textContent = sourceText;
+    renderLibrary();
   }
 
   function renderLibrary() {
@@ -83,7 +164,7 @@
 
     const songs = state.songs.filter(song => {
       if (!terms.length) return true;
-      const hay = normalizedSearch(`${song.title} ${song.artist} ${song.type || ''}`);
+      const hay = normalizedSearch(`${song.title} ${song.artist} ${song.type || ''} ${song.version ? `version ${song.version}` : ''}`);
       return terms.every(term => hay.includes(term));
     });
 
@@ -94,13 +175,16 @@
       button.type = 'button';
       button.className = 'song-row';
       button.dataset.id = song.id;
-      const capo = song.capoText && !/^no capo$/i.test(song.capoText) ? `<span class="capo-dot">Capo ${escapeHtml(song.capoText.replace(/\s*fret$/i, ''))}</span>` : '';
+      const capo = song.capoText && !/^no capo$/i.test(song.capoText)
+        ? `<span class="capo-dot">Capo ${escapeHtml(song.capoText.replace(/\s*fret$/i, ''))}</span>`
+        : '';
+      const version = song.version ? ` v${escapeHtml(song.version)}` : '';
       button.innerHTML = `
         <span class="song-main">
           <span class="song-name">${escapeHtml(song.title || 'Unknown song')}</span>
           <span class="song-artist">${escapeHtml(song.artist || 'Unknown artist')}</span>
         </span>
-        <span class="song-side">${capo}<span class="song-type">${escapeHtml(song.type || 'Chords')}</span></span>`;
+        <span class="song-side">${capo}<span class="song-type">${escapeHtml(song.type || 'Chords')}${version}</span></span>`;
       button.addEventListener('click', () => openReader(song.id, true));
       fragment.appendChild(button);
     }
@@ -109,9 +193,102 @@
     empty.textContent = query ? 'No saved tabs match that search.' : 'No saved tabs found.';
   }
 
+  function labeledMeta(doc, label) {
+    const wanted = String(label || '').toLocaleLowerCase();
+    for (const row of doc.querySelectorAll('tr')) {
+      const th = row.querySelector('th');
+      const td = row.querySelector('td');
+      if (!th || !td) continue;
+      const heading = th.textContent.replace(/:/g, '').trim().toLocaleLowerCase();
+      if (heading === wanted) return td.textContent.trim();
+    }
+    return '';
+  }
+
+  function cleanHeaderTitle(value) {
+    return String(value || '')
+      .replace(/\s+(?:UKULELE\s+CHORDS?|BASS\s+TABS?|CHORDS?|TABS?)(?:\s+\(ver\s+\d+\))?\s*$/i, '')
+      .trim();
+  }
+
+  function chooseTabPre(doc) {
+    const candidates = [...doc.querySelectorAll('pre')];
+    if (!candidates.length) return null;
+    candidates.sort((a, b) => {
+      const aScore = a.querySelectorAll('span[data-name]').length * 10000 + (a.textContent || '').length;
+      const bScore = b.querySelectorAll('span[data-name]').length * 10000 + (b.textContent || '').length;
+      return bScore - aScore;
+    });
+    return candidates[0];
+  }
+
+  function serializeTabPre(root) {
+    let out = '';
+
+    function walk(node) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        out += node.nodeValue || '';
+        return;
+      }
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+      const el = node;
+      if (el.classList?.contains('d8c-l')) return;
+      if (el.matches?.('span[data-name]')) {
+        const chord = (el.getAttribute('data-name') || el.textContent || '').trim();
+        if (chord) out += `[ch]${chord}[/ch]`;
+        return;
+      }
+      if (el.tagName === 'BR') {
+        out += '\n';
+        return;
+      }
+      for (const child of el.childNodes) walk(child);
+    }
+
+    walk(root);
+    return out.replace(/\r\n?/g, '\n').replace(/[ \t]+\n/g, '\n').replace(/\n{5,}/g, '\n\n\n\n').replace(/\s+$/, '');
+  }
+
+  function parseSavedPage(html, shell) {
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const pre = chooseTabPre(doc);
+    if (!pre) throw new Error('This saved page does not contain a readable tab section.');
+
+    const header = doc.querySelector('header.ygsMD') || doc.querySelector('header');
+    const exactTitle = cleanHeaderTitle(header?.querySelector('h1')?.textContent || doc.querySelector('h1.giatc')?.textContent || '');
+    const artist = header?.querySelector('.nGwD6 a')?.textContent?.trim() || shell.artist;
+    const canonical = doc.querySelector('link[rel="canonical"]')?.getAttribute('href') || '';
+    const content = serializeTabPre(pre);
+    if (!content.trim()) throw new Error('The saved chord sheet is empty.');
+
+    return {
+      title: exactTitle || shell.title,
+      artist: artist || shell.artist,
+      capoText: doc.querySelector('#capo')?.textContent?.trim() || labeledMeta(doc, 'Capo') || 'No capo',
+      tuning: doc.querySelector('#tuning')?.textContent?.trim() || labeledMeta(doc, 'Tuning'),
+      difficulty: doc.querySelector('#difficulty')?.textContent?.trim() || labeledMeta(doc, 'Difficulty'),
+      key: labeledMeta(doc, 'Key'),
+      source: /^https?:\/\//i.test(canonical) ? canonical : '',
+      content,
+      loaded: true,
+    };
+  }
+
   async function loadSong(id) {
     const song = state.byId.get(String(id));
     if (!song) throw new Error('Song is not in the saved library.');
+    if (song.loaded && song.content) return song;
+
+    const localUrl = `./raw-tabs/${encodeURIComponent(song.fileName)}`;
+    let response = await fetch(localUrl, { cache: 'force-cache' });
+    if (!response.ok && song.downloadUrl) {
+      response = await fetch(song.downloadUrl, { cache: 'force-cache' });
+    }
+    if (!response.ok) throw new Error(`Saved page returned ${response.status}`);
+
+    const html = await response.text();
+    Object.assign(song, parseSavedPage(html, song));
     return song;
   }
 
@@ -123,6 +300,7 @@
     $('libraryFilter').hidden = false;
     document.title = 'BenTar';
     if (push) history.pushState({}, '', location.pathname);
+    renderLibrary();
     window.scrollTo(0, 0);
   }
 
@@ -330,13 +508,13 @@
     bindControls();
     updateSpeedLabel();
     try {
-      await loadManifest();
+      await loadLibrary();
       routeFromUrl();
     } catch (error) {
       console.error(error);
       $('libraryStatus').textContent = 'Could not load the saved library.';
       $('emptyState').hidden = false;
-      $('emptyState').textContent = error?.message || 'BenTar could not load its saved tab data.';
+      $('emptyState').textContent = error?.message || 'BenTar could not load its saved tab files.';
     }
   });
 })();

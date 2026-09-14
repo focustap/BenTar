@@ -7,7 +7,7 @@
   <meta name="description" content="BenTar — Ben's saved guitar chord sheets.">
   <title>BenTar</title>
   <link rel="manifest" href="./manifest.webmanifest">
-  <link rel="stylesheet" href="./static/pages.css?v=20260914d">
+  <link rel="stylesheet" href="./static/pages.css?v=20260914e">
 </head>
 <body>
   <header class="topbar">
@@ -20,7 +20,7 @@
       <div class="section-head">
         <div>
           <h1>My Tabs</h1>
-          <p id="libraryStatus">Loading saved tabs…</p>
+          <p id="libraryStatus">Reading saved tabs…</p>
         </div>
         <span class="pill">Saved library</span>
       </div>
@@ -30,7 +30,7 @@
     </section>
 
     <section id="readerView" hidden>
-      <div id="readerLoading" class="empty">Loading chord sheet…</div>
+      <div id="readerLoading" class="empty">Opening saved chord sheet…</div>
 
       <div id="readerContent" hidden>
         <div class="reader-head">
@@ -47,7 +47,7 @@
           <div class="control-group auto-group">
             <button id="autoScroll" class="control-main" type="button">▶ Auto</button>
             <button id="speedDown" type="button" aria-label="Slower auto scroll">−</button>
-            <span id="speedLabel" class="value-label">2 px/s</span>
+            <span id="speedLabel" class="value-label">1 px/s</span>
             <button id="speedUp" type="button" aria-label="Faster auto scroll">+</button>
           </div>
 
@@ -69,12 +69,12 @@
 
       <div id="readerError" class="empty" hidden>
         <h2>Couldn't open this chord sheet.</h2>
-        <p id="readerErrorText">The saved tab data is missing.</p>
+        <p id="readerErrorText">The saved tab page could not be read.</p>
         <button id="errorBackButton" class="secondary" type="button">← My Tabs</button>
       </div>
     </section>
   </main>
 
-  <script src="./static/site.js?v=20260914d" defer></script>
+  <script src="./static/site.js?v=20260914e" defer></script>
 </body>
 </html>
