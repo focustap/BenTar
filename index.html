@@ -59,14 +59,15 @@
       </div>
 
       <div id="readerError" class="empty" hidden>
-        <h2>BenTar couldn't load this chord sheet directly.</h2>
-        <p>The Freetar proxy may not allow browser requests from GitHub Pages.</p>
+        <h2>BenTar couldn't load this saved chord sheet.</h2>
+        <p>This tab may not have made it into the GitHub chord cache yet.</p>
         <a id="openFreetar" class="primary-link" href="#">Open this tab on Freetar</a>
         <button id="errorBackButton" class="secondary" type="button">← My Tabs</button>
       </div>
     </section>
   </main>
 
+  <script src="./static/cache-interceptor.js"></script>
   <script src="./static/site.js" defer></script>
 </body>
 </html>
