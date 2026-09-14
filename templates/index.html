@@ -1,28 +1,28 @@
 {% extends "base.html" %}
 
 {% block content %}
+<style>
+  /* The library is owned by the repo now. Local remove buttons would only
+     disappear until refresh, so do not show them. */
+  #libraryTable .removeFavorite { display: none !important; }
+</style>
+
 <section class="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
   <div>
     <h1 class="h4 mb-1">{% if search_results is defined %}Search results{% else %}My Tabs{% endif %}</h1>
-    <div id="libraryCount" class="text-body-secondary small"></div>
+    <div id="libraryCount" class="text-body-secondary small">Loading GitHub library…</div>
   </div>
-  <div class="d-flex gap-2">
-    <label class="btn btn-primary mb-0">
-      Upload favorites JSON
-      <input id="favoritesFile" type="file" accept="application/json,.json" hidden>
-    </label>
-    <button id="clearLibrary" class="btn btn-outline-danger" type="button">Clear</button>
-  </div>
+  <span class="badge text-bg-secondary">GitHub library</span>
 </section>
 
 {% if search_results is defined %}
 <div class="alert alert-secondary py-2 small">
-  Searching Freetar for <strong>{{ search_term }}</strong>. Tap a star to save a result to My Tabs.
+  Searching Freetar for <strong>{{ search_term }}</strong>. Your saved library is managed from the BenTar GitHub repo.
 </div>
 <div class="table-responsive">
   <table class="table table-hover align-middle">
     <thead>
-      <tr><th>Artist</th><th>Song</th><th class="d-none d-md-table-cell">Rating</th><th class="d-none d-md-table-cell">Type</th><th></th></tr>
+      <tr><th>Artist</th><th>Song</th><th class="d-none d-md-table-cell">Rating</th><th class="d-none d-md-table-cell">Type</th></tr>
     </thead>
     <tbody>
       {% for result in search_results %}
@@ -31,17 +31,9 @@
         <td><a href="/tab/{{ result.tab_path }}">{{ result.song_name }}{% if result.version > 1 %} (ver {{ result.version }}){% endif %}</a></td>
         <td class="d-none d-md-table-cell">{{ result.rating }}/5</td>
         <td class="d-none d-md-table-cell">{{ result.type }}</td>
-        <td class="text-end">
-          <button class="btn btn-sm btn-outline-warning saveFavorite"
-                  data-url="/tab/{{ result.tab_path }}"
-                  data-artist="{{ result.artist_name }}"
-                  data-song="{{ result.song_name }}"
-                  data-rating="{{ result.rating }}"
-                  data-type="{{ result.type }}">☆</button>
-        </td>
       </tr>
       {% else %}
-      <tr><td colspan="5" class="text-body-secondary">No results.</td></tr>
+      <tr><td colspan="4" class="text-body-secondary">No results.</td></tr>
       {% endfor %}
     </tbody>
   </table>
@@ -56,7 +48,7 @@
 {% endif %}
 
 <hr class="my-4">
-<h2 class="h5">My imported tabs</h2>
+<h2 class="h5">My saved tabs</h2>
 {% endif %}
 
 <div class="mb-3">
@@ -65,8 +57,8 @@
 
 <div id="emptyLibrary" class="empty-state border rounded-3 p-4 text-center">
   <div class="fs-2 mb-2">🎸</div>
-  <h2 class="h5">Upload your Freetar favorites</h2>
-  <p class="text-body-secondary mb-0">Choose the <code>freetar-favorites.json</code> export. BenTar stores it locally in this browser.</p>
+  <h2 class="h5">Loading your saved tabs</h2>
+  <p class="text-body-secondary mb-0">BenTar loads the shared library directly from this project's GitHub-backed files.</p>
 </div>
 
 <div class="table-responsive">
@@ -79,6 +71,33 @@
 
 {% block scripts %}
 <script>
-  window.BenTar && window.BenTar.initLibraryPage();
+(async () => {
+  const storageKey = 'bentar_favorites';
+  const status = document.getElementById('libraryCount');
+
+  try {
+    // These files live in GitHub with the app. Every browser (including the
+    // glasses) loads the same source instead of having its own uploaded JSON.
+    const manifestResponse = await fetch('/static/library/manifest.json', { cache: 'no-store' });
+    if (!manifestResponse.ok) throw new Error(`manifest returned ${manifestResponse.status}`);
+
+    const files = await manifestResponse.json();
+    if (!Array.isArray(files) || !files.length) throw new Error('library manifest is empty');
+
+    const chunks = await Promise.all(files.map(async (name) => {
+      const response = await fetch(`/static/library/${encodeURIComponent(name)}`, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`${name} returned ${response.status}`);
+      return response.json();
+    }));
+
+    const library = Object.assign({}, ...chunks);
+    localStorage.setItem(storageKey, JSON.stringify(library));
+  } catch (error) {
+    console.error('BenTar could not refresh the GitHub library:', error);
+    if (status) status.textContent = 'Could not refresh GitHub library — using last cached copy if available';
+  } finally {
+    window.BenTar && window.BenTar.initLibraryPage();
+  }
+})();
 </script>
 {% endblock %}
