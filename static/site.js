@@ -10,7 +10,6 @@
   const state = {
     songs: [],
     byId: new Map(),
-    chunkCache: new Map(),
     filter: '',
     currentSong: null,
     transpose: 0,
@@ -42,10 +41,34 @@
     const response = await fetch(`./static/data/manifest.json?v=${BUILD}`, { cache: 'no-store' });
     if (!response.ok) throw new Error(`Library manifest returned ${response.status}`);
     const manifest = await response.json();
-    state.songs = Array.isArray(manifest.songs) ? manifest.songs : [];
+    const partNames = Array.isArray(manifest.parts) ? manifest.parts : [];
+    if (!partNames.length) throw new Error('The saved-library data parts are missing.');
+
+    const encodedParts = await Promise.all(partNames.map(async name => {
+      const partResponse = await fetch(`./static/data/${encodeURIComponent(name)}?v=${BUILD}`, { cache: 'force-cache' });
+      if (!partResponse.ok) throw new Error(`${name} returned ${partResponse.status}`);
+      return (await partResponse.text()).trim();
+    }));
+
+    const songsById = await decodeLibrary(encodedParts.join(''));
+    state.songs = Object.values(songsById).sort((a, b) =>
+      (a.artist || '').localeCompare(b.artist || '') || (a.title || '').localeCompare(b.title || '')
+    );
     state.byId = new Map(state.songs.map(song => [String(song.id), song]));
     $('libraryStatus').textContent = `${state.songs.length} unique tabs from ${manifest.sourceFiles || state.songs.length} saved pages`;
     renderLibrary();
+  }
+
+  async function decodeLibrary(encoded) {
+    if (typeof DecompressionStream !== 'function') {
+      throw new Error('This browser does not support the saved-library decoder.');
+    }
+    const binary = atob(encoded);
+    const compressed = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) compressed[i] = binary.charCodeAt(i);
+    const stream = new Blob([compressed]).stream().pipeThrough(new DecompressionStream('gzip'));
+    const text = await new Response(stream).text();
+    return JSON.parse(text);
   }
 
   function normalizedSearch(value) {
@@ -87,17 +110,8 @@
   }
 
   async function loadSong(id) {
-    const meta = state.byId.get(String(id));
-    if (!meta) throw new Error('Song is not in the saved library.');
-    let chunk = state.chunkCache.get(meta.chunk);
-    if (!chunk) {
-      const response = await fetch(`./static/data/${encodeURIComponent(meta.chunk)}?v=${BUILD}`, { cache: 'force-cache' });
-      if (!response.ok) throw new Error(`${meta.chunk} returned ${response.status}`);
-      chunk = await response.json();
-      state.chunkCache.set(meta.chunk, chunk);
-    }
-    const song = chunk[String(id)];
-    if (!song) throw new Error('The song is missing from its data chunk.');
+    const song = state.byId.get(String(id));
+    if (!song) throw new Error('Song is not in the saved library.');
     return song;
   }
 
