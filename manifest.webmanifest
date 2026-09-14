@@ -1,0 +1,10 @@
+{
+  "name": "BenTar",
+  "short_name": "BenTar",
+  "description": "Ben's saved guitar tabs and chord reader",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0b0d10",
+  "theme_color": "#0b0d10"
+}
